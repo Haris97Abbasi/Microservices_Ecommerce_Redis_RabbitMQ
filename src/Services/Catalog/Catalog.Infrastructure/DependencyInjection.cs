@@ -1,9 +1,13 @@
 using Catalog.Core.Entities;
+using System.Net.Http.Headers;
 using Catalog.Core.Repositories;
+using Catalog.Core.Services;
+using Catalog.Infrastructure.Llm;
 using Catalog.Infrastructure.Persistence;
 using Catalog.Infrastructure.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
 namespace Catalog.Infrastructure;
@@ -25,6 +29,18 @@ public static class DependencyInjection
         services.AddScoped<IProductRepository, ProductRepository>();
 
         services.AddHostedService<CatalogSeeder>();
+
+        services.Configure<LlmSettings>(configuration.GetSection(LlmSettings.SectionName));
+        services.AddHttpClient<ILlmClient, OpenAiCompatibleLlmClient>((sp, client) =>
+        {
+            var llm = sp.GetRequiredService<IOptions<LlmSettings>>().Value;
+
+            client.BaseAddress = new Uri(llm.BaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(llm.TimeoutSeconds);
+
+            if (!string.IsNullOrWhiteSpace(llm.ApiKey))
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", llm.ApiKey);
+        });
 
         return services;
     }
