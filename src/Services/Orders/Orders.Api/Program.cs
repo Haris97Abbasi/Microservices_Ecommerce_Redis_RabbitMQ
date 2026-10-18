@@ -1,5 +1,6 @@
 using BuildingBlocks.Messaging;
 using Orders.Application;
+using Orders.Application.Consumers;
 using Orders.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -7,7 +8,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
-builder.Services.AddMessageBus(builder.Configuration, "orders");
+builder.Services.AddMessageBus(builder.Configuration, "orders", x => x.AddConsumer<PaymentProcessedConsumer>());
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
