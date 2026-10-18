@@ -1,12 +1,11 @@
-# SmartStore local infrastructure.
-# Values come from the .env file next to this file (copy .env.example -> .env).
-# Every ${VAR:-default} falls back to the default if .env is missing.
-# The 4 APIs will be added to this file in step 12.
-
 name: smartstore
 
+x-rabbitmq-env: &rabbitmq-env
+  RabbitMq__Host: rabbitmq
+  RabbitMq__Username: ${RABBITMQ_USER:-guest}
+  RabbitMq__Password: ${RABBITMQ_PASSWORD:-guest}
+
 services:
-  # Catalog API store (products). No auth - local demo only.
   mongo:
     image: mongo:7
     container_name: smartstore-mongo
@@ -15,8 +14,6 @@ services:
     volumes:
       - mongo-data:/data/db
 
-  # Orders API store. "--appendonly yes" turns on AOF persistence so orders
-  # survive a container restart (the brief asks for persistence enabled).
   redis:
     image: redis:7-alpine
     container_name: smartstore-redis
@@ -26,7 +23,6 @@ services:
     volumes:
       - redis-data:/data
 
-  # Payments API store. The database is created automatically on first start.
   postgres:
     image: postgres:16-alpine
     container_name: smartstore-postgres
@@ -38,10 +34,12 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartstore} -d ${POSTGRES_DB:-paymentsdb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
-  # Notifications API store. The SA password must be at least 8 chars with
-  # upper, lower, digit and symbol, or the container exits on startup.
-  # The NotificationsDb database itself is created by the API (EnsureCreated, step 11).
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
     container_name: smartstore-sqlserver
@@ -52,9 +50,13 @@ services:
       - "${SQLSERVER_PORT:-1433}:1433"
     volumes:
       - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -b -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
 
-  # Message broker for MassTransit.
-  # 5672 = AMQP port the APIs connect to; 15672 = management UI (http://localhost:15672).
   rabbitmq:
     image: rabbitmq:3-management
     container_name: smartstore-rabbitmq
@@ -66,9 +68,83 @@ services:
       - "${RABBITMQ_UI_PORT:-15672}:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
 
-# Named volumes keep data between "docker compose down" / "up".
-# "docker compose down -v" wipes them for a clean start.
+  catalog-api:
+    build:
+      context: .
+      dockerfile: src/Services/Catalog/Catalog.Api/Dockerfile
+    image: smartstore/catalog-api
+    container_name: smartstore-catalog-api
+    environment:
+      MongoDb__ConnectionString: mongodb://mongo:27017
+      Llm__BaseUrl: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      Llm__ApiKey: ${LLM_API_KEY:-}
+      Llm__Model: ${LLM_MODEL:-gpt-4o-mini}
+    ports:
+      - "5001:8080"
+    depends_on:
+      mongo:
+        condition: service_started
+
+  orders-api:
+    build:
+      context: .
+      dockerfile: src/Services/Orders/Orders.Api/Dockerfile
+    image: smartstore/orders-api
+    container_name: smartstore-orders-api
+    environment:
+      <<: *rabbitmq-env
+      ConnectionStrings__Redis: redis:6379
+      CatalogApi__BaseUrl: http://catalog-api:8080
+    ports:
+      - "5002:8080"
+    depends_on:
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      catalog-api:
+        condition: service_started
+
+  payments-api:
+    build:
+      context: .
+      dockerfile: src/Services/Payments/Payments.Api/Dockerfile
+    image: smartstore/payments-api
+    container_name: smartstore-payments-api
+    environment:
+      <<: *rabbitmq-env
+      ConnectionStrings__PaymentsDb: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-paymentsdb};Username=${POSTGRES_USER:-smartstore};Password=${POSTGRES_PASSWORD:-smartstore}"
+    ports:
+      - "5003:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  notifications-api:
+    build:
+      context: .
+      dockerfile: src/Services/Notifications/Notifications.Api/Dockerfile
+    image: smartstore/notifications-api
+    container_name: smartstore-notifications-api
+    environment:
+      <<: *rabbitmq-env
+      ConnectionStrings__NotificationsDb: "Server=sqlserver,1433;Database=NotificationsDb;User Id=sa;Password=${SQLSERVER_SA_PASSWORD:-SmartStore@12345};TrustServerCertificate=True"
+    ports:
+      - "5004:8080"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
 volumes:
   mongo-data:
   redis-data:
