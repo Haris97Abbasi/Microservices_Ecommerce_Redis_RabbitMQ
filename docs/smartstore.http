@@ -1,0 +1,91 @@
+@catalog = http://localhost:5001
+@orders = http://localhost:5002
+@payments = http://localhost:5003
+@notifications = http://localhost:5004
+
+### 1. List products (8 are seeded on first start)
+GET {{catalog}}/catalog/products
+
+### 2. Create a product
+# @name createProduct
+POST {{catalog}}/catalog/products
+Content-Type: application/json
+
+{
+  "name": "Smart Desk Lamp",
+  "description": "LED desk lamp with adjustable colour temperature and USB-C charging port.",
+  "category": "Home",
+  "price": 49.90,
+  "stock": 25
+}
+
+### 3. Get the new product
+GET {{catalog}}/catalog/products/{{createProduct.response.body.$.id}}
+
+### 4. Update it (full replace)
+PUT {{catalog}}/catalog/products/{{createProduct.response.body.$.id}}
+Content-Type: application/json
+
+{
+  "name": "Smart Desk Lamp",
+  "description": "LED desk lamp with adjustable colour temperature and USB-C charging port.",
+  "category": "Home",
+  "price": 44.90,
+  "stock": 25
+}
+
+### 5. Place an order -> 201, status "Pending"
+# @name placeOrder
+POST {{orders}}/orders
+Content-Type: application/json
+
+{
+  "productId": "{{createProduct.response.body.$.id}}",
+  "quantity": 2
+}
+
+### 6. Get the order again (a second later) -> status "Paid"
+GET {{orders}}/orders/{{placeOrder.response.body.$.id}}
+
+### 7. The payment stored in PostgreSQL
+GET {{payments}}/payments/{{placeOrder.response.body.$.id}}
+
+### 8. The notification stored in SQL Server for this order
+GET {{notifications}}/notifications?orderId={{placeOrder.response.body.$.id}}
+
+### 9. All notifications, newest first
+GET {{notifications}}/notifications
+
+### 10. Ask the AI assistant about products (needs Llm:ApiKey, otherwise 503)
+POST {{catalog}}/catalog/assistant
+Content-Type: application/json
+
+{
+  "question": "I need something for my desk and something for working out. What do you have and how much is it?"
+}
+
+### --- Error cases ---
+
+### Order for an unknown product -> 400 "Product not found"
+POST {{orders}}/orders
+Content-Type: application/json
+
+{
+  "productId": "000000000000000000000000",
+  "quantity": 1
+}
+
+### Invalid order body (quantity 0) -> 400 with validation errors
+POST {{orders}}/orders
+Content-Type: application/json
+
+{
+  "productId": "{{createProduct.response.body.$.id}}",
+  "quantity": 0
+}
+
+### Unknown order -> 404
+GET {{orders}}/orders/00000000-0000-0000-0000-000000000001
+
+### Delete the demo product -> 204 (its order keeps the copied name/price)
+DELETE {{catalog}}/catalog/products/{{createProduct.response.body.$.id}}

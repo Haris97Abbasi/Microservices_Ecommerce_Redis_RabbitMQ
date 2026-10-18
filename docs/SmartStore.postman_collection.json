@@ -1,0 +1,280 @@
+{
+  "info": {
+    "name": "SmartStore Microservices",
+    "description": "End-to-end demo: create product -> place order -> payment event -> notification -> ask AI.\n\nStart the stack (docker compose up -d --build), then run the 'Demo flow' folder top to bottom with the Collection Runner. Test scripts store productId/orderId in collection variables, so no copy/paste is needed.\n\nPorts: Catalog 5001, Orders 5002, Payments 5003, Notifications 5004.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "catalogUrl", "value": "http://localhost:5001" },
+    { "key": "ordersUrl", "value": "http://localhost:5002" },
+    { "key": "paymentsUrl", "value": "http://localhost:5003" },
+    { "key": "notificationsUrl", "value": "http://localhost:5004" },
+    { "key": "productId", "value": "" },
+    { "key": "orderId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Demo flow",
+      "description": "Run these in order.",
+      "item": [
+        {
+          "name": "1. List products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK and seeded products present', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().length).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{catalogUrl}}/catalog/products"
+          }
+        },
+        {
+          "name": "2. Create product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('201 Created with an id', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(pm.response.json().id).to.have.lengthOf(24);",
+                  "});",
+                  "pm.collectionVariables.set('productId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Smart Desk Lamp\",\n  \"description\": \"LED desk lamp with adjustable colour temperature and USB-C charging port.\",\n  \"category\": \"Home\",\n  \"price\": 49.90,\n  \"stock\": 25\n}"
+            },
+            "url": "{{catalogUrl}}/catalog/products"
+          }
+        },
+        {
+          "name": "3. Get product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK, same product', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('productId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{catalogUrl}}/catalog/products/{{productId}}"
+          }
+        },
+        {
+          "name": "4. Place order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const order = pm.response.json();",
+                  "pm.test('201 Created, Pending, total from Catalog price', () => {",
+                  "    pm.response.to.have.status(201);",
+                  "    pm.expect(order.status).to.eql('Pending');",
+                  "    pm.expect(order.totalAmount).to.eql(99.8);",
+                  "});",
+                  "pm.collectionVariables.set('orderId', order.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": \"{{productId}}\",\n  \"quantity\": 2\n}"
+            },
+            "url": "{{ordersUrl}}/orders"
+          }
+        },
+        {
+          "name": "5. Get order (now Paid)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "setTimeout(() => {}, 2000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Order is Paid', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('Paid');",
+                  "    pm.expect(pm.response.json().paidAt).to.not.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{ordersUrl}}/orders/{{orderId}}"
+          }
+        },
+        {
+          "name": "6. Get payment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Payment Succeeded for the order total', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('Succeeded');",
+                  "    pm.expect(pm.response.json().amount).to.eql(99.8);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{paymentsUrl}}/payments/{{orderId}}"
+          }
+        },
+        {
+          "name": "7. Get notifications for order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Exactly one PaymentSucceeded notification', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    const notes = pm.response.json();",
+                  "    pm.expect(notes).to.have.lengthOf(1);",
+                  "    pm.expect(notes[0].type).to.eql('PaymentSucceeded');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{notificationsUrl}}/notifications?orderId={{orderId}}",
+              "host": ["{{notificationsUrl}}"],
+              "path": ["notifications"],
+              "query": [{ "key": "orderId", "value": "{{orderId}}" }]
+            }
+          }
+        },
+        {
+          "name": "8. Ask the AI assistant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 with an answer (503 means no LLM API key configured)', () => {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+                  "    if (pm.response.code === 200) pm.expect(pm.response.json().answer).to.not.be.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"I need something for my desk and something for working out. What do you have and how much is it?\"\n}"
+            },
+            "url": "{{catalogUrl}}/catalog/assistant"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error cases",
+      "item": [
+        {
+          "name": "Order unknown product (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"productId\": \"000000000000000000000000\",\n  \"quantity\": 1\n}" },
+            "url": "{{ordersUrl}}/orders"
+          }
+        },
+        {
+          "name": "Order with quantity 0 (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('400 Bad Request', () => pm.response.to.have.status(400));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"productId\": \"{{productId}}\",\n  \"quantity\": 0\n}" },
+            "url": "{{ordersUrl}}/orders"
+          }
+        },
+        {
+          "name": "Unknown order (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('404 Not Found', () => pm.response.to.have.status(404));"] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{ordersUrl}}/orders/00000000-0000-0000-0000-000000000001"
+          }
+        },
+        {
+          "name": "Delete demo product (204)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('204 No Content', () => pm.response.to.have.status(204));"] }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": "{{catalogUrl}}/catalog/products/{{productId}}"
+          }
+        }
+      ]
+    }
+  ]
+}
