@@ -399,3 +399,7 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+# Local project docs (not tracked)
+plan.md
+SmartStore_Microservices_Project_Brief.pdf
